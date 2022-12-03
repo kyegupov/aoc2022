@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+itertools = "*"
 
 [[bin]]
 name = "main01a"
@@ -22,3 +23,11 @@ path = "src/main02a.rs"
 [[bin]]
 name = "main02b"
 path = "src/main02b.rs"
+
+[[bin]]
+name = "main03a"
+path = "src/main03a.rs"
+
+[[bin]]
+name = "main03b"
+path = "src/main03b.rs"
