@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 itertools = "*"
+nom = "*"
 
 [[bin]]
 name = "main01a"
@@ -31,3 +32,11 @@ path = "src/main03a.rs"
 [[bin]]
 name = "main03b"
 path = "src/main03b.rs"
+
+[[bin]]
+name = "main04a"
+path = "src/main04a.rs"
+
+[[bin]]
+name = "main04b"
+path = "src/main04b.rs"
