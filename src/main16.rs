@@ -33,15 +33,19 @@ struct Rules {
     start: Rc<String>,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct State<'a> {
+struct SolutionState<'a> {
     minutes_left: u64,
-    solution: Vec<Rc<String>>,
-    opened: &'a mut BTreeSet<Rc<String>>,
+    location: Rc<String>,
     current_flow: u64,
     total_flow: u64,
-    best: u64,
-    memoized_elephant_solutions: BTreeMap<BTreeSet<Rc<String>>, u64>,
+    is_final_stage: bool, // true if part 1 or elephant in part 2
+    opened: &'a mut BTreeSet<Rc<String>>,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Persisted {
+    global_best: u64,
+    memoized_elephant_solutions_by_preopened_valves: BTreeMap<BTreeSet<Rc<String>>, u64>,
 }
 
 enum Action {
@@ -49,69 +53,81 @@ enum Action {
     Move(Rc<String>),
 }
 
-impl<'a> State<'a> {
-    fn find_solution(&mut self, r: &Rules, is_final: bool) {
-        let location = self.solution.last().unwrap_or(&r.start);
-        let distances = &r.distances[location];
+impl Persisted {
+    fn try_solution_step(&mut self, s: SolutionState, r: &Rules) -> u64 {
+        let distances = &r.distances[&s.location];
+        // do-nothing solution
+        let mut best = s.total_flow + s.current_flow * s.minutes_left;
+        let mut cannot_progress = true;
         for x in r.flows.keys() {
-            if self.opened.contains(x) {
+            if s.opened.contains(x) {
                 continue;
             }
             let dist = distances[x];
-            // dbg!(dist, self.minutes_left);
-            if dist < self.minutes_left {
-                self.minutes_left -= dist + 1;
-                self.total_flow += (dist + 1) * self.current_flow;
-                self.current_flow += r.flows[x];
-                self.solution.push(x.clone());
-                self.opened.insert(x.clone());
-                self.find_solution(r, is_final);
-                self.minutes_left += dist + 1;
-                self.current_flow -= r.flows[x];
-                self.total_flow -= (dist + 1) * self.current_flow;
-                self.solution.pop();
-                self.opened.remove(x);
+            if dist < s.minutes_left {
+                cannot_progress = false;
+                let ss = SolutionState {
+                    minutes_left: s.minutes_left - dist - 1,
+                    total_flow: s.total_flow + (dist + 1) * s.current_flow,
+                    current_flow: s.current_flow + r.flows[x],
+                    location: x.clone(),
+                    is_final_stage: s.is_final_stage,
+                    opened: s.opened,
+                };
+                ss.opened.insert(x.clone());
+                let solution = self.try_solution_step(ss, r);
+                if solution > best {
+                    best = solution;
+                }
+                s.opened.remove(x);
             }
         }
-        let total_flow = self.total_flow + self.current_flow * self.minutes_left;
-        if is_final {
-            if total_flow > self.best {
-                self.best = total_flow;
+
+        if s.is_final_stage {
+            if !r.part2 && best > self.global_best {
+                self.global_best = best;
             }
-        } else {
-            let maybe_best_elephant_solution =
-                self.memoized_elephant_solutions.get(&self.opened).copied();
+            return best;
+        } else if cannot_progress {
+            // dbg!(best);
+            let maybe_best_elephant_solution = self
+                .memoized_elephant_solutions_by_preopened_valves
+                .get(&s.opened)
+                .copied();
             let best_elephant_solution = maybe_best_elephant_solution.or_else(|| {
                 let theor_max = r
                     .flows
                     .iter()
-                    .filter(|(k, v)| !self.opened.contains(*k))
+                    .filter(|(k, v)| !s.opened.contains(*k))
                     .map(|(k, v)| v * (26 - 1 - r.distances[&r.start][k]))
                     .sum::<u64>();
-                if theor_max + total_flow > self.best {
-                    let mut state_inner = State {
+                if theor_max + best > self.global_best {
+                    let solution_elephant = SolutionState {
                         minutes_left: 26,
-                        solution: vec![],
-                        opened: self.opened,
+                        location: r.start.clone(),
                         current_flow: 0,
                         total_flow: 0,
-                        best: 0,
-                        memoized_elephant_solutions: BTreeMap::new(),
+                        is_final_stage: true,
+                        opened: s.opened,
                     };
-                    state_inner.find_solution(r, true);
-                    self.memoized_elephant_solutions
-                        .insert(state_inner.opened.clone(), state_inner.best);
-                    Some(state_inner.best)
+                    let best_elephant = self.try_solution_step(solution_elephant, r);
+                    // dbg!(best_elephant);
+                    self.memoized_elephant_solutions_by_preopened_valves
+                        .insert(s.opened.clone(), best_elephant);
+                    Some(best_elephant)
                 } else {
                     None
                 }
             });
-            if let Some(bes) = best_elephant_solution {
-                if total_flow + bes > self.best {
-                    self.best = total_flow + bes;
-                    dbg!(self.best);
+            if let Some(best_elephant) = best_elephant_solution {
+                if best + best_elephant > self.global_best {
+                    self.global_best = best + best_elephant;
+                    // dbg!(self.global_best);
                 }
             }
+            self.global_best
+        } else {
+            best
         }
     }
 }
@@ -184,18 +200,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
-    let mut opened = Default::default();
-    let mut state = State {
+    let mut persisted = Persisted {
+        global_best: 0,
+        memoized_elephant_solutions_by_preopened_valves: BTreeMap::new(),
+    };
+    let state = SolutionState {
         minutes_left: if rules.part2 { 26 } else { 30 },
-        solution: vec![],
-        opened: &mut opened,
+        location: rules.start.clone(),
         current_flow: 0,
         total_flow: 0,
-        best: 0,
-        memoized_elephant_solutions: BTreeMap::new(),
+        is_final_stage: !rules.part2,
+        opened: &mut BTreeSet::new(),
     };
-    state.find_solution(&rules, !rules.part2);
-    dbg!(state.best);
+    let best = persisted.try_solution_step(state, &rules);
+    dbg!(best);
 
     Ok(())
 }
