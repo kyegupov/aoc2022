@@ -1,65 +1,62 @@
 use std::{
     cmp::min,
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     env,
     error::Error,
     fs::read_to_string,
+    iter,
     rc::Rc,
 };
 
-use itertools::Itertools;
+use bit_set::BitSet;
 use nom::{
     bytes::complete::{tag, take_while},
-    character::{complete::alpha1, complete::digit1, is_digit},
-    combinator::{map, map_res, opt, recognize},
-    error,
+    character::{complete::alpha1, complete::digit1},
+    combinator::{map_res, opt, recognize},
     multi::separated_list1,
-    sequence::{preceded, separated_pair, tuple},
+    sequence::{preceded, tuple},
     AsChar, IResult,
 };
 
 #[derive(Debug)]
-struct Valve {
-    flow: u64,
-    routes: BTreeSet<Rc<String>>,
-}
-
-#[derive(Debug)]
 struct Rules {
     valves: BTreeSet<Rc<String>>,
-    flows: BTreeMap<Rc<String>, u64>, // only nonzero
-    distances: BTreeMap<Rc<String>, BTreeMap<Rc<String>, u64>>,
+
+    flows: BTreeMap<Rc<String>, u64>, // only valves with nonzero flows
+    distances: BTreeMap<Rc<String>, BTreeMap<Rc<String>, u64>>, // distance between valves
+
+    // Same as above, but using indices of valves instead of names.
+    // idx 0 = start
+    // other idx are indexes in flows + 1
+    flows_by_idx: Vec<u64>,
+    distances_by_idx: Vec<Vec<u64>>,
+
     part2: bool,
     start: Rc<String>,
 }
 
 struct SolutionState<'a> {
     minutes_left: u64,
-    location: Rc<String>,
+    location: usize,
     current_flow: u64,
     total_flow: u64,
     is_final_stage: bool, // true if part 1 or elephant in part 2
-    opened: &'a mut BTreeSet<Rc<String>>,
+    opened: &'a mut BitSet,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct Persisted {
     global_best: u64,
-    memoized_elephant_solutions_by_preopened_valves: BTreeMap<BTreeSet<Rc<String>>, u64>,
-}
-
-enum Action {
-    Open,
-    Move(Rc<String>),
+    memoized_elephant_solutions_by_preopened_valves: BTreeMap<BitSet, u64>,
 }
 
 impl Persisted {
     fn try_solution_step(&mut self, s: SolutionState, r: &Rules) -> u64 {
-        let distances = &r.distances[&s.location];
+        let distances = &r.distances_by_idx[s.location];
         // do-nothing solution
         let mut best = s.total_flow + s.current_flow * s.minutes_left;
         let mut cannot_progress = true;
-        for x in r.flows.keys() {
+        for x in 0..r.flows_by_idx.len() {
             if s.opened.contains(x) {
                 continue;
             }
@@ -69,7 +66,7 @@ impl Persisted {
                 let ss = SolutionState {
                     minutes_left: s.minutes_left - dist - 1,
                     total_flow: s.total_flow + (dist + 1) * s.current_flow,
-                    current_flow: s.current_flow + r.flows[x],
+                    current_flow: s.current_flow + r.flows_by_idx[x],
                     location: x.clone(),
                     is_final_stage: s.is_final_stage,
                     opened: s.opened,
@@ -89,22 +86,19 @@ impl Persisted {
             }
             return best;
         } else if cannot_progress {
-            // dbg!(best);
             let maybe_best_elephant_solution = self
                 .memoized_elephant_solutions_by_preopened_valves
                 .get(&s.opened)
                 .copied();
             let best_elephant_solution = maybe_best_elephant_solution.or_else(|| {
-                let theor_max = r
-                    .flows
-                    .iter()
-                    .filter(|(k, v)| !s.opened.contains(*k))
-                    .map(|(k, v)| v * (26 - 1 - r.distances[&r.start][k]))
+                let theor_max = (1..r.flows_by_idx.len())
+                    .filter(|(k)| !s.opened.contains(*k))
+                    .map(|(k)| r.flows_by_idx[k] * (26 - 1 - r.distances_by_idx[0][k]))
                     .sum::<u64>();
                 if theor_max + best > self.global_best {
                     let solution_elephant = SolutionState {
                         minutes_left: 26,
-                        location: r.start.clone(),
+                        location: 0,
                         current_flow: 0,
                         total_flow: 0,
                         is_final_stage: true,
@@ -166,6 +160,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         flows: Default::default(),
         distances: Default::default(),
         start: Rc::new("AA".to_string()),
+        flows_by_idx: Default::default(),
+        distances_by_idx: Default::default(),
     };
 
     for (y, line) in read_to_string("input16.txt")?.lines().enumerate() {
@@ -200,17 +196,36 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
     }
+
+    rules.flows_by_idx.push(0);
+    for a in rules.flows.values() {
+        rules.flows_by_idx.push(*a);
+    }
+    for (i1, n1) in iter::once(&rules.start)
+        .chain(rules.flows.keys())
+        .enumerate()
+    {
+        let mut row = vec![];
+        for (i2, n2) in iter::once(&rules.start)
+            .chain(rules.flows.keys())
+            .enumerate()
+        {
+            row.push(rules.distances[n1][n2])
+        }
+        rules.distances_by_idx.push(row);
+    }
+
     let mut persisted = Persisted {
         global_best: 0,
         memoized_elephant_solutions_by_preopened_valves: BTreeMap::new(),
     };
     let state = SolutionState {
         minutes_left: if rules.part2 { 26 } else { 30 },
-        location: rules.start.clone(),
+        location: 0,
         current_flow: 0,
         total_flow: 0,
         is_final_stage: !rules.part2,
-        opened: &mut BTreeSet::new(),
+        opened: &mut BitSet::new(),
     };
     let best = persisted.try_solution_step(state, &rules);
     dbg!(best);

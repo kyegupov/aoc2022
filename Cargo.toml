@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 itertools = "*"
 nom = "*"
+bit-set = "*"
 
 [[bin]]
 name = "main01a"
